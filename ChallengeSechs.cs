@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace CodingContest;
 
-public static class ChallengeSechs
+public static partial class ChallengeSechs
 {
     public record Pattern(int Radius, char[][] Cells, int Count);
 
@@ -11,9 +11,14 @@ public static class ChallengeSechs
     const string Instructions = "-TFB";
 
     // Tuning knobs, overridable through environment variables of the same name.
-    static readonly int BeamWidth = (int)Setting("BEAM", 64);
+    static readonly int BeamWidth = (int)Setting("BEAM", 256);
     static readonly double Decay = Setting("DECAY", 0.6);
     static readonly double PotentialWeight = Setting("WEIGHT", 0.8);
+    static readonly double LookaheadWeight = Setting("LOOK", 0.5);
+    static readonly double PaintWeight = Setting("PAINT", 0.3);
+    static readonly double[] DecayPower = Enumerable.Range(0, 64).Select(d => Math.Pow(Decay, d)).ToArray();
+    static readonly int CycleLimit = (int)Setting("CYCLE", 7);
+    static readonly int CycleRestarts = (int)Setting("RESTARTS", 300);
 
     static double Setting(string name, double fallback) =>
         double.TryParse(Environment.GetEnvironmentVariable(name), System.Globalization.CultureInfo.InvariantCulture, out double value)
@@ -27,7 +32,13 @@ public static class ChallengeSechs
 
         Parallel.For(0, patterns.Count, i =>
         {
-            programs[i] = string.Join('\n', new Solver(patterns[i]).Run().Select(FormatLine));
+            var solver = new Solver(patterns[i]);
+            var program = solver.Run();
+            int maxLength = Math.Min(CycleLimit, program.Count / patterns[i].Count + 1);
+            var cycled = solver.RunCycle(maxLength, CycleRestarts, new Random(i));
+            if (cycled != null && cycled.Count < program.Count)
+                program = cycled;
+            programs[i] = string.Join('\n', program.Select(FormatLine));
         });
 
         return string.Join("\n\n", programs) + "\n";
@@ -216,15 +227,20 @@ public static class ChallengeSechs
     /// Beam search over ticks.
     /// A state keeps emitter rail offsets, their on/off bits and which target cells hold matter;
     /// matter outside the target and its skirt never decides a submission and stays untracked.
-    sealed class Solver
+    sealed partial class Solver
     {
         readonly Pattern pattern;
         readonly int radius, span, targetCount, words;
         // Beam mask per emitter and rail offset, over target cells first, skirt cells after.
         readonly ulong[][][] beam;
         readonly ulong[] targetFull, skirt;
-        // Rail offset at which an emitter's beam crosses a target cell, -1 where none does.
+        // Rail offset at which an emitter's beam crosses a target or skirt cell, -1 where none does.
         readonly int[][] reach;
+        readonly List<Paint> paints = [];
+
+        /// Both emitters of one axis on the same line give each of its cells two hits.
+        /// The line's skirt cells then need a third beam each to stay clear.
+        record Paint(int Emitter, int Offset, int PartnerOffset, ulong[] Target, int[] Skirt);
 
         public Solver(Pattern pattern)
         {
@@ -255,7 +271,7 @@ public static class ChallengeSechs
             for (int e = 0; e < 6; e++)
             {
                 beam[e] = new ulong[span][];
-                reach[e] = Enumerable.Repeat(-1, targetCount).ToArray();
+                reach[e] = Enumerable.Repeat(-1, index.Count).ToArray();
                 for (int o = 0; o < span; o++)
                 {
                     beam[e][o] = new ulong[words];
@@ -263,11 +279,25 @@ public static class ChallengeSechs
                         if (index.TryGetValue(cell, out int i))
                         {
                             beam[e][o][i / 64] |= 1UL << (i % 64);
-                            if (i < targetCount)
-                                reach[e][i] = o;
+                            reach[e][i] = o;
                         }
                 }
             }
+
+            for (int e = 0; e < 3; e++)
+                for (int o = 0; o < span; o++)
+                {
+                    var line = beam[e][o];
+                    var lineTarget = line.Select((word, w) => word & targetFull[w]).ToArray();
+                    if (lineTarget.All(word => word == 0)) continue;
+
+                    int partner = Enumerable.Range(0, span).First(p => beam[e + 3][p].AsSpan().SequenceEqual(line));
+                    var lineSkirt = Enumerable.Range(targetCount, index.Count - targetCount)
+                        .Where(i => ((line[i / 64] >> (i % 64)) & 1) != 0)
+                        .ToArray();
+                    if (lineSkirt.Length <= 4)
+                        paints.Add(new Paint(e, o, partner, lineTarget, lineSkirt));
+                }
         }
 
         int RailIndex(int emitter, int offset) =>
@@ -326,7 +356,10 @@ public static class ChallengeSechs
                         layers.Add([child]);
                         return Trace(layers);
                     }
-                    next.Add((Progress(child) + PotentialWeight * PairPotential(child), child));
+                    double held = Progress(child);
+                    double ahead = LookaheadWeight > 0 ? BestNext(child) - held : 0;
+                    double paint = PaintWeight > 0 ? PaintWeight * PaintPotential(child) : 0;
+                    next.Add((held + LookaheadWeight * ahead + PotentialWeight * PairPotential(child) + paint, child));
                 }
 
                 layers.Add(next.OrderByDescending(entry => entry.score).Take(BeamWidth).Select(entry => entry.node).ToArray());
@@ -428,9 +461,53 @@ public static class ChallengeSechs
                     else if (d < second) second = d;
                 }
                 if (second < 1000)
-                    sum += Math.Pow(Decay, second);
+                    sum += DecayPower[second];
             }
             return sum;
+        }
+
+        /// Best paint in reach: missing target cells on the line, discounted by the ticks until
+        /// both painters and one killing beam per skirt cell of the line sit in place.
+        double PaintPotential(Node node)
+        {
+            double best = 0;
+            Span<int> killers = stackalloc int[4];
+            foreach (var paint in paints)
+            {
+                int gain = 0;
+                for (int w = 0; w < words; w++)
+                    gain += BitOperations.PopCount(paint.Target[w] & ~node.Matter[w]);
+                if (gain < 2 || gain * DecayPower[0] <= best) continue;
+
+                int painters = Math.Max(Reach(node.Config, paint.Emitter, paint.Offset), Reach(node.Config, paint.Emitter + 3, paint.PartnerOffset));
+                int count = 0;
+                for (int k = 0; k < 6; k++)
+                    if (k % 3 != paint.Emitter)
+                        killers[count++] = k;
+
+                int ticks = Math.Max(painters, Assign(node.Config, paint.Skirt, 0, killers[..count], 0));
+                if (ticks < DecayPower.Length)
+                    best = Math.Max(best, gain * DecayPower[ticks]);
+            }
+            return best;
+        }
+
+        int Reach(ulong config, int e, int offset) =>
+            offset < 0 ? 1000 : Math.Abs(Offset(config, e) - offset) + (Active(config, e) ? 0 : 1);
+
+        /// Fewest ticks until every listed skirt cell has its own killing beam, emitters taken from <paramref name="free"/>.
+        int Assign(ulong config, int[] cells, int next, Span<int> free, int used)
+        {
+            if (next == cells.Length) return 0;
+            int best = 1000;
+            for (int i = 0; i < free.Length; i++)
+            {
+                if ((used >> i & 1) != 0) continue;
+                int ticks = Reach(config, free[i], reach[free[i]][cells[next]]);
+                if (ticks >= best) continue;
+                best = Math.Min(best, Math.Max(ticks, Assign(config, cells, next + 1, free, used | 1 << i)));
+            }
+            return best;
         }
 
         /// Per emitter and rail state, the summed closeness to the parent's missing target cells.
@@ -447,20 +524,41 @@ public static class ChallengeSechs
                     for (int o = 0; o < span; o++)
                     {
                         int d = Math.Abs(o - need);
-                        table[e][2 * o] += Math.Pow(Decay, d + 1);
-                        table[e][2 * o + 1] += Math.Pow(Decay, d);
+                        table[e][2 * o] += DecayPower[d + 1];
+                        table[e][2 * o + 1] += DecayPower[d];
                     }
                 }
             }
             return table;
         }
 
+        delegate void Leaf(int action, int count, bool complete, double hint);
+
         void Expand(Node node, int parent, List<(double score, int parent, int action)> candidates)
         {
-            var potential = EmitterPotential(node);
             double scale = 0.05 / Math.Max(1, targetCount);
             double baseProgress = node.Submitted * targetCount;
 
+            Enumerate(node, EmitterPotential(node), (action, count, complete, hint) =>
+            {
+                double progress = complete ? baseProgress + 2 * targetCount : baseProgress + count;
+                candidates.Add((progress + scale * hint, parent, action));
+            });
+        }
+
+        /// Highest progress that any instruction line reaches from this state in one tick.
+        double BestNext(Node node)
+        {
+            double best = Progress(node);
+            double baseProgress = node.Submitted * targetCount;
+            Enumerate(node, null, (_, count, complete, _) =>
+                best = Math.Max(best, complete ? baseProgress + 2 * targetCount : baseProgress + count));
+            return best;
+        }
+
+        /// Calls <paramref name="leaf"/> for every instruction line that keeps the skirt clear.
+        void Enumerate(Node node, double[][]? potential, Leaf leaf)
+        {
             var options = new (int action, int offset, bool active)[6][];
             for (int e = 0; e < 6; e++)
             {
@@ -496,8 +594,7 @@ public static class ChallengeSechs
                         count += BitOperations.PopCount(matter);
                         if (matter != targetFull[w]) complete = false;
                     }
-                    double progress = complete ? baseProgress + 2 * targetCount : baseProgress + count;
-                    candidates.Add((progress + scale * hint, parent, action));
+                    leaf(action, count, complete, hint);
                     return;
                 }
 
@@ -519,7 +616,7 @@ public static class ChallengeSechs
                         Array.Copy(two[e], two[e + 1], words);
                         Array.Copy(three[e], three[e + 1], words);
                     }
-                    Visit(e + 1, action | (code << (2 * e)), hint + potential[e][2 * o + (on ? 1 : 0)]);
+                    Visit(e + 1, action | (code << (2 * e)), potential == null ? 0 : hint + potential[e][2 * o + (on ? 1 : 0)]);
                 }
             }
 
