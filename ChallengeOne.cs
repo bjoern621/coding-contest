@@ -2,7 +2,7 @@ namespace CodingContest;
 
 public static class ChallengeOne
 {
-    public static void Solve(string[] lines)
+    public static string Solve(string[] lines)
     {
         var numbers = string.Join(' ', lines)
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
@@ -11,7 +11,7 @@ public static class ChallengeOne
 
         var boards = numbers.Skip(1).Take(numbers[0]).Select(Board);
 
-        Console.WriteLine(string.Join("\n\n", boards));
+        return string.Join("\n\n", boards);
     }
 
     static string Board(int radius)

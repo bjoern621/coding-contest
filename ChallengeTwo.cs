@@ -2,11 +2,11 @@ namespace CodingContest;
 
 public static class ChallengeTwo
 {
-    public static void Solve(string[] lines)
+    public static string Solve(string[] lines)
     {
         var maps = ReadMaps(lines).Select(SolveMap);
 
-        Console.WriteLine(string.Join("\n\n", maps.Select(Format)));
+        return string.Join("\n\n", maps.Select(Format));
     }
 
     static char[][] SolveMap(char[][] map)
