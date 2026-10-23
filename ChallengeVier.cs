@@ -11,9 +11,38 @@ public static class ChallengeVier
 
     record FabProgram(int Radius, char[][] Instructions);
 
+    static int countStarInMap(char[][] map)
+    {
+        int count = 0;
+        for (int row = 0; row < map.Length; row++)
+        {
+            for (int col = 0; col < map[row].Length; col++)
+            {
+                if (map[row][col] == '*')
+                {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
     static char[][] RunProgram(FabProgram program, int index)
     {
         var map = ChallengeOne.Board(program.Radius).Split('\n').Select(row => row.ToCharArray()).ToArray();
+
+        // pro * position welche emitter dort sind
+        var emitterPositionsList = new List<List<char>>();
+        for (int i = 0; i < countStarInMap(map); i++)
+        {
+            emitterPositionsList.Add(new List<char>());
+        }
+
+        for (int emitter = 0; emitter < 6; emitter++)
+        {
+            emitterPositionsList[emitter * program.Radius].Add((char)('1' + emitter));
+        }
+
 
         Console.WriteLine($"Program {index + 1} (radius {program.Radius}, {program.Instructions.Length} ticks)");
         Console.WriteLine("  Emitter  1 2 3 4 5 6");
@@ -25,6 +54,8 @@ public static class ChallengeVier
 
             for (int emitter = 0; emitter < 6; emitter++)
             {
+
+
                 char instruction = line[emitter];
 
                 switch (instruction)
@@ -52,6 +83,8 @@ public static class ChallengeVier
 
     static char[][] SolveMap(char[][] map)
     {
+        // ein board mit genau einer zahl
+
         // empty map zero
         hitCount = new int[map.Length][];
         for (int i = 0; i < map.Length; i++)
