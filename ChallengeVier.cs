@@ -34,7 +34,7 @@ public static class ChallengeVier
         var map = ChallengeOne.Board(program.Radius).Split('\n').Select(row => row.ToCharArray()).ToArray();
 
         List<(int x, int y, int e)> stars = GetStarsPositions(map);
-        Console.WriteLine($"Stars found at: {string.Join(", ", stars.Select(s => $"({s.x}, {s.y})"))}");
+        // Console.WriteLine($"Stars found at: {string.Join(", ", stars.Select(s => $"({s.x}, {s.y})"))}");
 
         // liste pro * position welche emitter dort sind
         var emitterPositionsList = new List<List<char>>();
@@ -45,10 +45,10 @@ public static class ChallengeVier
 
         for (int emitter = 0; emitter < 6; emitter++)
         {
-            emitterPositionsList[emitter * program.Radius].Add((char)('1' + emitter));
+            emitterPositionsList[emitter * program.Radius].Add((char)('1' +((   emitter + 1 + 6) % 6))); 
         }
 
-        Console.WriteLine($"Initial emitter positions: {string.Join(", ", emitterPositionsList.Select(list => string.Join("", list)))}");
+        // Console.WriteLine($"Initial emitter positions: {string.Join(", ", emitterPositionsList.Select(list => string.Join("", list)))}");
 
         Console.WriteLine(stars.Count == emitterPositionsList.Count);
 
@@ -60,8 +60,8 @@ public static class ChallengeVier
         }
 
 
-        Console.WriteLine($"Program {index + 1} (radius {program.Radius}, {program.Instructions.Length} ticks)");
-        Console.WriteLine("  Emitter  1 2 3 4 5 6");
+        // Console.WriteLine($"Program {index + 1} (radius {program.Radius}, {program.Instructions.Length} ticks)");
+        // Console.WriteLine("  Emitter  1 2 3 4 5 6");
 
         for (int tick = 0; tick < program.Instructions.Length; tick++)
         {
@@ -78,7 +78,7 @@ public static class ChallengeVier
                     case 'F':
                         int emitterListIndexF = findListIndexOfEmitter(emitterPositionsList, (char)('1' + emitter));
                         emitterPositionsList[emitterListIndexF].Remove((char)('1' + emitter));
-                        emitterPositionsList[emitterListIndexF + 1 % emitterPositionsList.Count].Add((char)('1' + emitter));
+                        emitterPositionsList[(emitterListIndexF + 1) % emitterPositionsList.Count].Add((char)('1' + emitter));
                         break;
                     case 'B':
                         int emitterListIndexB = findListIndexOfEmitter(emitterPositionsList, (char)('1' + emitter));
@@ -106,13 +106,15 @@ public static class ChallengeVier
                 // set one emitter at correct position:
                 int emitterListIndex = findListIndexOfEmitter(emitterPositionsList, (char)('1' + emitter));
 
+                // Console.WriteLine($"Emitter {emitter + 1} is at position {emitterListIndex} in the list of emitter positions.");
+
                 map[stars[emitterListIndex].x][stars[emitterListIndex].y] = (char)('1' + emitter);
 
-                Console.WriteLine($"Emitter {emitter + 1} at position ({stars[emitterListIndex].x}, {stars[emitterListIndex].y}) with state {emitterStates[emitter]}");
+                // Console.WriteLine($"Emitter {emitter + 1} at position ({stars[emitterListIndex].x}, {stars[emitterListIndex].y}) with state {emitterStates[emitter]}");
 
                 // print map
-                Console.WriteLine("Current map:");
-                Console.WriteLine(Format(map));
+                // Console.WriteLine("Current map:");
+                // Console.WriteLine(Format(map));
 
                 map = SolveMap(map, hitCount);
 
@@ -223,13 +225,6 @@ private static List<(int row, int col)> directions = [(0,2), (1, 1), (1, -1), (0
     {
         // ein board mit genau einer zahl
 
-        // // empty map zero
-        // hitCount = new int[map.Length][];
-        // for (int i = 0; i < map.Length; i++)
-        // {
-        //     hitCount[i] = new int[map[i].Length];
-        // }
-
         // Find number
         for (int row = 0; row < map.Length; row++)
         {
@@ -256,13 +251,6 @@ private static List<(int row, int col)> directions = [(0,2), (1, 1), (1, -1), (0
                 }
             }
         }
-
-        // output hit count map
-        // for (int i = 0; i < hitCount.Length; i++)
-        // {
-        //     Console.WriteLine(string.Join(" ", hitCount[i]));
-        // }
-
         
 
         return map;
@@ -272,11 +260,16 @@ private static List<(int row, int col)> directions = [(0,2), (1, 1), (1, -1), (0
     {
         col += 2;
 
+        try{
+
         while (map[row][col] is not ('*' or (>= '1' and <= '6')))
         {
             // map[row][col] = 'M';
             hitCount[row][col]++;
             col+=2;
+        }}
+        catch (IndexOutOfRangeException)
+        {
         }
     }
 
@@ -285,12 +278,17 @@ private static List<(int row, int col)> directions = [(0,2), (1, 1), (1, -1), (0
         row += 1;
         col += 1;
 
+        try{
+
         while  (map[row][col] is not ('*' or (>= '1' and <= '6')))
         {
             // map[row][col] = 'M';
             hitCount[row][col]++;
             row++;
             col+=1;
+        }}
+        catch (IndexOutOfRangeException)
+        {
         }
     }
 
@@ -299,12 +297,16 @@ private static List<(int row, int col)> directions = [(0,2), (1, 1), (1, -1), (0
         row += 1;
         col -= 1;
 
+        try {
+
         while (map[row][col] is not ('*' or (>= '1' and <= '6')))
         {
             // map[row][col] = 'M';
             hitCount[row][col]++;
             row += 1;
             col -= 1;
+        }}catch (IndexOutOfRangeException)
+        {
         }
     }
 
@@ -312,18 +314,27 @@ private static List<(int row, int col)> directions = [(0,2), (1, 1), (1, -1), (0
     {
         col -= 2;
 
-        while  (map[row][col] is not ('*' or (>= '1' and <= '6')))
+        try
+        {
+             while  (map[row][col] is not ('*' or (>= '1' and <= '6')))
         {
             // map[row][col] = 'M';
             hitCount[row][col]++;
             col-=2;
         }
+        }catch (IndexOutOfRangeException)
+        {
+        }
+
+       
     }
 
     static void make5(char[][] map, int row, int col)
     {
         row -= 1;
         col -= 1;
+
+        try {
 
         while  (map[row][col] is not ('*' or (>= '1' and <= '6')))
         {
@@ -332,6 +343,10 @@ private static List<(int row, int col)> directions = [(0,2), (1, 1), (1, -1), (0
             row--;
             col-=1;
         }
+        }
+        catch (IndexOutOfRangeException)
+        {
+        }
     }
 
     static void make6(char[][] map, int row, int col)
@@ -339,12 +354,18 @@ private static List<(int row, int col)> directions = [(0,2), (1, 1), (1, -1), (0
         row -= 1;
         col += 1;
 
+        try {
+
         while  (map[row][col] is not ('*' or (>= '1' and <= '6')))
         {
             // map[row][col] = 'M';
             hitCount[row][col]++;
             row--;
             col+=1;
+        }}
+
+        catch (IndexOutOfRangeException)
+        {
         }
     }
 

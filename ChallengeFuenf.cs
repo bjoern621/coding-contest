@@ -27,11 +27,100 @@ public static class ChallengeFuenf
         return count;
     }
 
+    static char[][] makePatternCorrect(char[][] pattern)
+    {
+        char[][] updatedPattern = pattern
+            .Select(row => Enumerable.Repeat(' ', row.Length).ToArray())
+            .ToArray();
+
+        // strip pattern to make match easier
+        // place only M and *
+        for (int row = 0; row < pattern.Length; row++)
+        {
+            for (int col = 0; col < pattern[row].Length; col++)
+            {
+                if (pattern[row][col] is 'M' or '*')
+                {
+                    updatedPattern[row][col] = pattern[row][col];
+                }
+            }
+        }
+
+        // extrude
+        for (int row = 0; row < pattern.Length; row++)
+        {
+            for (int col = 0; col < pattern[row].Length; col++)
+            {
+                if (pattern[row][col] is 'M')
+                {
+                    extrudeMInPattern(updatedPattern, row, col);
+                }
+            }
+        }
+
+        return updatedPattern;
+    }
+
+    static void extrudeMInPattern(char[][] currentUpdatedPattern, int row, int col)
+    {
+        // Console.WriteLine($"Extruding M at ({row}, {col})");
+        // Console.WriteLine(Format(currentUpdatedPattern));
+
+        // for each M in the pattern make O's around (except for the M's in the same place)
+
+        // above
+        int rIndex = row - 1;
+        for (int cIndex = col - 1; cIndex <= col + 1; cIndex+=2)
+            {
+                if (rIndex >= 0 && rIndex < currentUpdatedPattern.Length && cIndex >= 0 && cIndex < currentUpdatedPattern[rIndex].Length)
+                {
+                    if (currentUpdatedPattern[rIndex][cIndex] is not ('M' or '*'))
+                    {
+                        currentUpdatedPattern[rIndex][cIndex] = 'O';
+                    }
+                }
+            }
+
+        // same row
+        rIndex = row;
+        for (int cIndex = col - 2; cIndex <= col + 2; cIndex+=4)
+            {
+                if (rIndex >= 0 && rIndex < currentUpdatedPattern.Length && cIndex >= 0 && cIndex < currentUpdatedPattern[rIndex].Length)
+                {
+                    if (currentUpdatedPattern[rIndex][cIndex] is not ('M' or '*'))
+                    {
+                        currentUpdatedPattern[rIndex][cIndex] = 'O';
+                    }
+                }
+            }
+
+        // below
+        rIndex = row + 1;
+        for (int cIndex = col - 1; cIndex <= col + 1; cIndex+=2)
+            {
+                if (rIndex >= 0 && rIndex < currentUpdatedPattern.Length && cIndex >= 0 && cIndex < currentUpdatedPattern[rIndex].Length)
+                {
+                    if (currentUpdatedPattern[rIndex][cIndex] is not ('M' or '*'))
+                    {
+                        currentUpdatedPattern[rIndex][cIndex] = 'O';
+                    }
+                }
+            }
+    }
+
     static char[] emitterStates = new char[6]; // 0 is off; default, 1 is on
 
     static int RunProgram(FabProgram program, int index)
     {
         int submitted = 0;
+
+        // Console.WriteLine("Pattern");
+        // Console.WriteLine(Format(program.Pattern));
+
+        var correctedPattern = makePatternCorrect(program.Pattern);
+
+        // Console.WriteLine("Corrected Pattern");
+        // Console.WriteLine(Format(correctedPattern));
 
         var map = ChallengeOne.Board(program.Radius).Split('\n').Select(row => row.ToCharArray()).ToArray();
 
@@ -52,7 +141,7 @@ public static class ChallengeFuenf
 
         // Console.WriteLine($"Initial emitter positions: {string.Join(", ", emitterPositionsList.Select(list => string.Join("", list)))}");
 
-        Console.WriteLine(stars.Count == emitterPositionsList.Count);
+        // Console.WriteLine(stars.Count == emitterPositionsList.Count);
 
         // 0 ist off; default
         // 1 is on
@@ -68,7 +157,7 @@ public static class ChallengeFuenf
         for (int tick = 0; tick < program.Instructions.Length; tick++)
         {
             var line = program.Instructions[tick];
-            Console.WriteLine($"  Tick {tick + 1,-3} {string.Join(' ', line)}");
+            // Console.WriteLine($"  Tick {tick + 1,-3} {string.Join(' ', line)}");
 
             // change emitter states and positions based on instructions
             for (int emitter = 0; emitter < 6; emitter++)
@@ -138,6 +227,43 @@ public static class ChallengeFuenf
                 }
             }
 
+            // check for pattern match
+            bool patternMatches = true;
+            for (int row = 0; row < correctedPattern.Length; row++)
+            {
+                for (int col = 0; col < correctedPattern[row].Length; col++)
+                {
+                    if (correctedPattern[row][col] is 'M' or 'O')
+                    {
+                        if (map[row][col] != correctedPattern[row][col])
+                        {
+                            patternMatches = false;
+                            break;
+                        }
+                    }
+                }
+                if (!patternMatches)
+                {
+                    break;
+                }
+            }
+
+            // replace pattern match
+            if (patternMatches)
+            {
+                for (int row = 0; row < correctedPattern.Length; row++)
+                {
+                    for (int col = 0; col < correctedPattern[row].Length; col++)
+                    {
+                        if (correctedPattern[row][col] is 'M')
+                        {
+                            map[row][col] = 'O';
+                        }
+                    }
+                }
+                submitted++;
+            }
+
         }
 
         Console.WriteLine();
@@ -165,7 +291,7 @@ private static List<(int row, int col)> directions = [(0,2), (1, 1), (1, -1), (0
             }
         }
 
-        Console.WriteLine($"Starting position of first star: ({curRow}, {curCol})");
+        // Console.WriteLine($"Starting position of first star: ({curRow}, {curCol})");
 
         for (int i = 0; i < directions.Count; i++)
         {
@@ -233,22 +359,22 @@ private static List<(int row, int col)> directions = [(0,2), (1, 1), (1, -1), (0
             for (int col = 0; col < map[row].Length; col++)
             {
                 if (map[row][col] == '1' && emitterStates[0] == '1'){
-                    Console.WriteLine($"Found 1 at {row}, {col}");
+                    // Console.WriteLine($"Found 1 at {row}, {col}");
                     make1(map, row, col);
                 }else if (map[row][col] == '2' && emitterStates[1] == '1'){
-                    Console.WriteLine($"Found 2 at {row}, {col}");
+                    // Console.WriteLine($"Found 2 at {row}, {col}");
                     make2(map, row, col);
                 }else if (map[row][col] == '3' && emitterStates[2] == '1'){
-                    Console.WriteLine($"Found 3 at {row}, {col}");
+                    // Console.WriteLine($"Found 3 at {row}, {col}");
                     make3(map, row, col);
                 }else if (map[row][col] == '4' && emitterStates[3] == '1'){
-                    Console.WriteLine($"Found 4 at {row}, {col}");
+                    // Console.WriteLine($"Found 4 at {row}, {col}");
                     make4(map, row, col);
                 }else if (map[row][col] == '5' && emitterStates[4] == '1'){
-                    Console.WriteLine($"Found 5 at {row}, {col}");
+                    // Console.WriteLine($"Found 5 at {row}, {col}");
                     make5(map, row, col);
                 }else if (map[row][col] == '6' && emitterStates[5] == '1'){
-                    Console.WriteLine($"Found 6 at {row}, {col}");
+                    // Console.WriteLine($"Found 6 at {row}, {col}");
                     make6(map, row, col);
                 }
             }

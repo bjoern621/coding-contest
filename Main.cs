@@ -1,6 +1,6 @@
 using CodingContest;
 
-var inputPath = "/home/bjoern/git/coding-contest/level-5/in_level-5_0-example.txt";
+var inputPath = "/home/bjoern/git/coding-contest/level-5/in_level-5_2-large.txt";
 var outputPath = Path.Combine(Path.GetDirectoryName(inputPath)!, Path.GetFileName(inputPath).Replace("in_", "out_"));
 
 var lines = File.ReadAllLines(inputPath);
