@@ -1,11 +1,16 @@
 """Shortens level 6 programs with CP-SAT.
 
-Usage: python3 polish.py <input> <output> <seconds per pattern> [jobs] [workers per job]
+Usage: python3 polish.py <input> <output> full|local <seconds per model> [jobs] [workers per job]
 
-Each program in <output> seeds a CP-SAT model as a solution hint.
-The model spans as many ticks as the program holds and minimises the ticks before the last required submission.
+Mode full models each whole program, seeded with the program as a solution hint,
+and minimises the ticks before the last required submission.
+Proven optimal patterns land in <output>.optimal and get skipped by later full runs.
+
+Mode local keeps most of a program fixed and re-plans one piece of it.
+A window has to reach the emitter state, pattern matter and submission count that its old ticks reached, in one tick less.
+A suffix starts from the state that the fixed ticks before it leave and only has to finish the remaining submissions.
+
 A shorter program replaces the old one once a replay confirms it.
-Proven optimal patterns land in <output>.optimal and get skipped on later runs.
 """
 
 import json
@@ -18,6 +23,8 @@ from ortools.sat.python import cp_model
 
 FIRE = [(0, 2), (1, 1), (1, -1), (0, -2), (-1, -1), (-1, 1)]
 RAIL_WALK = [(-1, 1), (0, 2), (1, 1), (1, -1), (0, -2), (-1, -1)]
+WINDOW = 10
+SUFFIX = 16
 
 
 def read_patterns(path):
@@ -63,11 +70,14 @@ def geometry(radius, grid):
     return target, skirt, cover
 
 
-def replay(radius, grid, program):
-    """Number of submissions that the program produces, following the contest sandbox."""
+def states(radius, grid, program):
+    """State before the first tick and after each tick: offsets, on bits, target matter, submissions so far.
+
+    The offsets go negative or past the rail for a program that leaves its emitters' useful range."""
     target, skirt, cover = geometry(radius, grid)
     offset, active = [radius] * 6, [False] * 6
     matter, submitted = set(), 0
+    trail = [(tuple(offset), tuple(active), frozenset(), 0)]
     for line in program:
         for e, token in enumerate(line.split()):
             if token == 'F':
@@ -77,7 +87,7 @@ def replay(radius, grid, program):
             elif token == 'T':
                 active[e] = not active[e]
         if any(o < 0 or o > 2 * radius for o in offset):
-            return -1
+            return None
         hits = {}
         for e in range(6):
             if active[e]:
@@ -91,21 +101,31 @@ def replay(radius, grid, program):
         if all(cell in matter for cell in target) and not any(cell in matter for cell in skirt):
             matter.difference_update(target)
             submitted += 1
-    return submitted
+        trail.append((tuple(offset), tuple(active), frozenset(matter & set(target)), submitted))
+    return trail
 
 
-def shorten(radius, grid, required, hint, seconds, workers):
-    """Returns (program, proven optimal) for the best program found within the hint's tick count."""
+def replay(radius, grid, program):
+    """Number of submissions that the program produces, following the contest sandbox."""
+    trail = states(radius, grid, program)
+    return -1 if trail is None else trail[-1][3]
+
+
+def plan(radius, grid, start, ticks, required, end, hint, seconds, workers):
+    """Plans `ticks` ticks from `start` that submit `required` patterns.
+
+    With an end state the plan has to reach it after the last tick; without one it minimises
+    the ticks before the last submission. Returns (lines or None, proven)."""
     target, skirt, cover = geometry(radius, grid)
     span = 2 * radius + 1
-    ticks = len(hint)
     model = cp_model.CpModel()
+    start_offset, start_active, start_matter = start
 
     at = [[[model.NewBoolVar('') for _ in range(span)] for _ in range(ticks + 1)] for _ in range(6)]
     on = [[model.NewBoolVar('') for _ in range(ticks + 1)] for _ in range(6)]
     for e in range(6):
-        model.Add(at[e][0][radius] == 1)
-        model.Add(on[e][0] == 0)
+        model.Add(at[e][0][start_offset[e]] == 1)
+        model.Add(on[e][0] == int(start_active[e]))
         for t in range(ticks + 1):
             model.AddExactlyOne(at[e][t])
         for t in range(1, ticks + 1):
@@ -140,29 +160,30 @@ def shorten(radius, grid, required, hint, seconds, workers):
         for t in range(1, ticks + 1):
             model.AddLinearExpressionInDomain(hits(cell, t), cp_model.Domain.FromValues([0, 1, 3, 4, 5, 6]))
 
-    submit = [None] + [model.NewBoolVar('') for _ in range(ticks)]
+    def fixed(value):
+        v = model.NewBoolVar('')
+        model.Add(v == value)
+        return v
+
+    submit = [fixed(0)] + [model.NewBoolVar('') for _ in range(ticks)]
     held = {}
     for cell in target:
-        before = None
+        before = fixed(int(cell in start_matter))
         for t in range(1, ticks + 1):
             h = hits(cell, t)
-            create, destroy, now = model.NewBoolVar(''), model.NewBoolVar(''), model.NewBoolVar('')
+            create, destroy, now, kept = (model.NewBoolVar('') for _ in range(4))
             model.Add(h == 2).OnlyEnforceIf(create)
             model.Add(h != 2).OnlyEnforceIf(create.Not())
             model.Add(h >= 3).OnlyEnforceIf(destroy)
             model.Add(h <= 2).OnlyEnforceIf(destroy.Not())
-            if before is None:
-                model.Add(now == create)
-            else:
-                # Matter carries over unless the previous tick submitted the pattern.
-                kept = model.NewBoolVar('')
-                model.AddImplication(kept, before)
-                model.AddImplication(kept, submit[t - 1].Not())
-                model.AddBoolOr([kept, before.Not(), submit[t - 1]])
-                model.AddImplication(now, destroy.Not())
-                model.AddImplication(create, now)
-                model.AddBoolOr([now, kept.Not(), destroy])
-                model.AddBoolOr([create, kept]).OnlyEnforceIf(now)
+            # Matter carries over unless the previous tick submitted the pattern.
+            model.AddImplication(kept, before)
+            model.AddImplication(kept, submit[t - 1].Not())
+            model.AddBoolOr([kept, before.Not(), submit[t - 1]])
+            model.AddImplication(now, destroy.Not())
+            model.AddImplication(create, now)
+            model.AddBoolOr([now, kept.Not(), destroy])
+            model.AddBoolOr([create, kept]).OnlyEnforceIf(now)
             held[cell, t] = now
             before = now
     for t in range(1, ticks + 1):
@@ -170,16 +191,28 @@ def shorten(radius, grid, required, hint, seconds, workers):
             model.AddImplication(submit[t], held[cell, t])
         model.AddBoolOr([submit[t]] + [held[cell, t].Not() for cell in target])
 
-    done = [model.NewBoolVar('') for _ in range(ticks + 1)]
-    model.Add(done[0] == 0)
-    for t in range(1, ticks + 1):
-        model.Add(sum(submit[1:t + 1]) >= required).OnlyEnforceIf(done[t])
-        model.Add(sum(submit[1:t + 1]) <= required - 1).OnlyEnforceIf(done[t].Not())
-    model.Add(done[ticks] == 1)
-    model.Minimize(sum(1 - done[t] for t in range(1, ticks + 1)))
+    if end is not None:
+        end_offset, end_active, end_matter = end
+        model.Add(sum(submit) == required)
+        for e in range(6):
+            model.Add(at[e][ticks][end_offset[e]] == 1)
+            model.Add(on[e][ticks] == int(end_active[e]))
+        for cell in target:
+            if cell in end_matter:
+                model.AddBoolAnd([held[cell, ticks], submit[ticks].Not()])
+            else:
+                model.AddBoolOr([held[cell, ticks].Not(), submit[ticks]])
+    else:
+        done = [model.NewBoolVar('') for _ in range(ticks + 1)]
+        model.Add(done[0] == int(required <= 0))
+        for t in range(1, ticks + 1):
+            model.Add(sum(submit[1:t + 1]) >= required).OnlyEnforceIf(done[t])
+            model.Add(sum(submit[1:t + 1]) <= required - 1).OnlyEnforceIf(done[t].Not())
+        model.Add(done[ticks] == 1)
+        model.Minimize(sum(1 - done[t] for t in range(1, ticks + 1)))
 
-    offset, active = [radius] * 6, [0] * 6
-    for t, line in enumerate(hint, 1):
+    offset, active = list(start_offset), [int(a) for a in start_active]
+    for t, line in enumerate(hint[:ticks], 1):
         for e, token in enumerate(line.split()):
             if token == 'F':
                 offset[e] += 1
@@ -187,8 +220,9 @@ def shorten(radius, grid, required, hint, seconds, workers):
                 offset[e] -= 1
             elif token == 'T':
                 active[e] ^= 1
-            for o in range(span):
-                model.AddHint(at[e][t][o], o == offset[e])
+            if 0 <= offset[e] < span:
+                for o in range(span):
+                    model.AddHint(at[e][t][o], o == offset[e])
             model.AddHint(on[e][t], active[e])
 
     solver = cp_model.CpSolver()
@@ -196,10 +230,10 @@ def shorten(radius, grid, required, hint, seconds, workers):
     solver.parameters.num_workers = workers
     status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return hint, False
+        return None, status == cp_model.INFEASIBLE
 
-    length = int(round(solver.ObjectiveValue())) + 1
-    program = []
+    length = ticks if end is not None else int(round(solver.ObjectiveValue())) + 1
+    lines = []
     for t in range(1, length + 1):
         tokens = []
         for e in range(6):
@@ -211,23 +245,52 @@ def shorten(radius, grid, required, hint, seconds, workers):
                 tokens.append('T')
             else:
                 tokens.append('-')
-        program.append(' '.join(tokens))
-    return program, status == cp_model.OPTIMAL
+        lines.append(' '.join(tokens))
+    return lines, status == cp_model.OPTIMAL
+
+
+def full(radius, grid, required, program, seconds, workers):
+    start = ((radius,) * 6, (False,) * 6, frozenset())
+    lines, proven = plan(radius, grid, start, len(program), required, None, program, seconds, workers)
+    return lines or program, proven
+
+
+def local(radius, grid, required, program, seconds, workers):
+    """Re-plans windows from the program's start to its end, then suffixes of growing length."""
+    a = 0
+    while a + WINDOW <= len(program):
+        trail = states(radius, grid, program)
+        first, last = trail[a], trail[a + WINDOW]
+        lines, _ = plan(radius, grid, first[:3], WINDOW - 1, last[3] - first[3], last[:3],
+                        program[a:a + WINDOW], seconds, workers)
+        if lines is not None and replay(radius, grid, program[:a] + lines + program[a + WINDOW:]) >= required:
+            program = program[:a] + lines + program[a + WINDOW:]
+        else:
+            a += WINDOW // 2
+
+    for length in range(SUFFIX // 2, SUFFIX + 1, SUFFIX // 4):
+        a = max(0, len(program) - length)
+        first = states(radius, grid, program)[a]
+        lines, _ = plan(radius, grid, first[:3], len(program) - a, required - first[3], None,
+                        program[a:], seconds, workers)
+        if lines is not None and replay(radius, grid, program[:a] + lines) >= required:
+            program = program[:a] + lines
+    return program, False
 
 
 def job(task):
-    index, (radius, grid, required), hint, seconds, workers = task
+    index, (radius, grid, required), program, mode, seconds, workers = task
     started = time.time()
-    program, optimal = shorten(radius, grid, required, hint, seconds, workers)
-    if len(program) < len(hint) and replay(radius, grid, program) < required:
-        program, optimal = hint, False
-    return index, program, optimal, time.time() - started
+    improved, proven = (full if mode == 'full' else local)(radius, grid, required, program, seconds, workers)
+    if len(improved) >= len(program) or replay(radius, grid, improved) < required:
+        improved = program
+    return index, improved, proven, time.time() - started
 
 
 def main():
-    input_path, output_path, seconds = sys.argv[1], sys.argv[2], float(sys.argv[3])
-    jobs = int(sys.argv[4]) if len(sys.argv) > 4 else 4
-    workers = int(sys.argv[5]) if len(sys.argv) > 5 else 4
+    input_path, output_path, mode, seconds = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+    jobs = int(sys.argv[5]) if len(sys.argv) > 5 else 4
+    workers = int(sys.argv[6]) if len(sys.argv) > 6 else 4
 
     patterns = read_patterns(input_path)
     programs = [block.split('\n') for block in open(output_path).read().strip('\n').split('\n\n')]
@@ -235,7 +298,7 @@ def main():
     optimal = set(json.load(open(optimal_path))) if os.path.exists(optimal_path) else set()
 
     # Long programs first: they hold the most lines to win.
-    tasks = [(i, patterns[i], programs[i], seconds, workers)
+    tasks = [(i, patterns[i], programs[i], mode, seconds, workers)
              for i in sorted(range(len(patterns)), key=lambda i: -len(programs[i])) if i not in optimal]
     before = sum(map(len, programs))
 
@@ -246,8 +309,10 @@ def main():
                 programs[i] = program
             if proven:
                 optimal.add(i)
-            with open(output_path, 'w') as f:
+            temporary = output_path + '.tmp'
+            with open(temporary, 'w') as f:
                 f.write('\n\n'.join('\n'.join(p) for p in programs) + '\n')
+            os.replace(temporary, output_path)
             with open(optimal_path, 'w') as f:
                 json.dump(sorted(optimal), f)
 
