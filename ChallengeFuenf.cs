@@ -4,9 +4,9 @@ public static class ChallengeFuenf
 {
     public static string Solve(string[] lines)
     {
-        var boards = ReadPrograms(lines).Select(RunProgram);
+        var submittedCounts = ReadPrograms(lines).Select(RunProgram);
 
-        return string.Join("\n\n", boards.Select(Format));
+        return string.Join('\n', submittedCounts);
     }
 
     record FabProgram(int Radius, char[][] Pattern, char[][] Instructions);
@@ -29,8 +29,10 @@ public static class ChallengeFuenf
 
     static char[] emitterStates = new char[6]; // 0 is off; default, 1 is on
 
-    static char[][] RunProgram(FabProgram program, int index)
+    static int RunProgram(FabProgram program, int index)
     {
+        int submitted = 0;
+
         var map = ChallengeOne.Board(program.Radius).Split('\n').Select(row => row.ToCharArray()).ToArray();
 
         List<(int x, int y, int e)> stars = GetStarsPositions(map);
@@ -140,7 +142,7 @@ public static class ChallengeFuenf
 
         Console.WriteLine();
 
-        return map;
+        return submitted;
     }
 
 private static List<(int row, int col)> directions = [(0,2), (1, 1), (1, -1), (0, -2), (-1, -1), (-1, 1)];
