@@ -14,9 +14,6 @@ public static class ChallengeVier
     static char[][] RunProgram(FabProgram program, int index)
     {
         var map = ChallengeOne.Board(program.Radius).Split('\n').Select(row => row.ToCharArray()).ToArray();
-        var active = new bool[6];
-        // Steps along the rail from the emitter's corner, clockwise positive.
-        var position = new int[6];
 
         Console.WriteLine($"Program {index + 1} (radius {program.Radius}, {program.Instructions.Length} ticks)");
         Console.WriteLine("  Emitter  1 2 3 4 5 6");
@@ -28,19 +25,22 @@ public static class ChallengeVier
 
             for (int emitter = 0; emitter < 6; emitter++)
             {
-                switch (line[emitter])
+                char instruction = line[emitter];
+
+                switch (instruction)
                 {
                     case 'F':
-                        position[emitter]++;
                         break;
                     case 'B':
-                        position[emitter]--;
                         break;
                     case 'T':
-                        active[emitter] = !active[emitter];
+                        break;
+                    case '-':
                         break;
                 }
             }
+
+            map = SolveMap(map);
         }
 
         Console.WriteLine();
