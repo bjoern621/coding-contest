@@ -14,7 +14,7 @@ public static class ChallengeOne
         return string.Join("\n\n", boards);
     }
 
-    static string Board(int radius)
+    internal static string Board(int radius)
     {
         var rows = new List<string>();
 
