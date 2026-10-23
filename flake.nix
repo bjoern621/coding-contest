@@ -26,6 +26,7 @@
           packages = [
             dotnet
             pkgs.netcoredbg # open-source debugger (VS Code / CLI)
+            (pkgs.python3.withPackages (ps: [ ps.ortools ]))
             pkgs.icu
             pkgs.openssl
           ];

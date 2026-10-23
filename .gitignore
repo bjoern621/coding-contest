@@ -73,3 +73,6 @@ Thumbs.db
 # Project
 # ---------------------------------------------------------------
 output/
+
+# CP-SAT proof cache of level-6/polish.py
+*.optimal
