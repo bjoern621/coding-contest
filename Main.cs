@@ -1,5 +1,11 @@
 using CodingContest;
 
+if (args.Length == 3 && args[0] == "--check")
+{
+    Console.WriteLine($"{Path.GetFileName(args[2])}: score {ChallengeSechs.Check(File.ReadAllLines(args[1]), File.ReadAllText(args[2]))}");
+    return;
+}
+
 string[] inputPaths = args.Length > 0
     ? args
     : ["/home/bjoern/git/coding-contest/level-6/in_level-6_0-example.txt", "/home/bjoern/git/coding-contest/level-6/in_level-6_1-small.txt"];
