@@ -285,9 +285,22 @@ public static class ChallengeSechs
                 start |= (ulong)radius << (5 * e);
 
             var layers = new List<Node[]> { new[] { new Node(-1, 0, start, new ulong[words], 0) } };
+            double bestProgress = 0;
+            int bestLayer = 0;
 
             while (true)
             {
+                double progress = layers[^1].Max(Progress);
+                if (progress > bestProgress)
+                    (bestProgress, bestLayer) = (progress, layers.Count);
+                else if (layers.Count - bestLayer > 2 * radius + 4)
+                {
+                    BuildMissingCell(layers);
+                    if (layers[^1][0].Submitted == pattern.Count)
+                        return Trace(layers);
+                    (bestProgress, bestLayer) = (Progress(layers[^1][0]), layers.Count);
+                }
+
                 var beamNodes = layers[^1];
                 var candidates = new List<(double score, int parent, int action)>();
 
@@ -321,6 +334,52 @@ public static class ChallengeSechs
                 if (layers.Count > 20000)
                     throw new InvalidOperationException("Beam search found no program within 20000 ticks");
             }
+        }
+
+        /// Leaves a stalled beam by building the closest missing target cell from the best state:
+        /// every emitter switches off, two emitters on different axes line up on the cell and switch on together.
+        /// Two crossing beams alone put matter on their crossing cell and nowhere else.
+        void BuildMissingCell(List<Node[]> layers)
+        {
+            int index = Enumerable.Range(0, layers[^1].Length).MaxBy(i => Progress(layers[^1][i]));
+            var node = layers[^1][index];
+
+            var (first, second, cellOf, cost) = (0, 0, 0, int.MaxValue);
+            for (int cell = 0; cell < targetCount; cell++)
+            {
+                if (Holds(node.Matter, cell)) continue;
+                for (int a = 0; a < 6; a++)
+                    for (int b = a + 1; b < 6; b++)
+                    {
+                        if (a % 3 == b % 3) continue;
+                        int c = Math.Max(Math.Abs(Offset(node.Config, a) - reach[a][cell]), Math.Abs(Offset(node.Config, b) - reach[b][cell]));
+                        if (c < cost)
+                            (first, second, cellOf, cost) = (a, b, cell, c);
+                    }
+            }
+
+            void Step(int action)
+            {
+                node = Apply(node, index, action) ?? throw new InvalidOperationException("Fallback step hit the skirt");
+                index = 0;
+                layers.Add([node]);
+            }
+
+            while (true)
+            {
+                int action = 0;
+                for (int e = 0; e < 6; e++)
+                {
+                    int o = Offset(node.Config, e);
+                    if (Active(node.Config, e))
+                        action |= 1 << (2 * e);
+                    else if ((e == first || e == second) && o != reach[e][cellOf])
+                        action |= (o < reach[e][cellOf] ? 2 : 3) << (2 * e);
+                }
+                if (action == 0) break;
+                Step(action);
+            }
+            Step((1 << (2 * first)) | (1 << (2 * second)));
         }
 
         static List<int> Trace(List<Node[]> layers)
